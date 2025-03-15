@@ -1,0 +1,8 @@
+[package]
+name = "fdup"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clarg = {git="https://github.com/WillDeJs/clarg.git"}
+sha2 = "0.10.8"
