@@ -89,6 +89,7 @@ fn setup() -> ArgMap {
 /// `path` the directory being analyzed
 /// `to_visit_queue` queue to store all directories found. Used in recursive execution.
 /// `file_hash_map`  map storing all hashes and files analyzed.
+/// `config` map or arguments passed to the CLI
 fn walk_directory(
     path: impl AsRef<Path>,
     to_visit_queue: &mut VecDeque<PathBuf>,
