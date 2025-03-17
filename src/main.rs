@@ -8,6 +8,9 @@ use std::{
 use clarg::{Arg, ArgMap, ArgParser};
 use sha2::{Digest, Sha256, digest::generic_array::functional::FunctionalSequence};
 
+#[cfg(target_os = "windows")]
+const FILE_ATTRIBUTE_HIDDEN: u32 = 0x00000002;
+
 fn main() {
     let args = setup();
     let file_hashmap = check_duplicates(args);
@@ -23,7 +26,7 @@ fn check_duplicates(args: ArgMap) -> HashMap<String, Vec<PathBuf>> {
     let mut directory_queue = VecDeque::new();
 
     // Visit the folder passed.
-    if let Err(err) = walk_directory(path, &mut directory_queue, &mut file_hashmap) {
+    if let Err(err) = walk_directory(path, &mut directory_queue, &mut file_hashmap, &args) {
         eprintln!("Error walking directory: `{path}` {err}");
     } else {
         // We may need to run recursively
@@ -32,7 +35,7 @@ fn check_duplicates(args: ArgMap) -> HashMap<String, Vec<PathBuf>> {
                 let tip = directory_queue.pop_front();
                 if let Some(directory) = tip {
                     if let Err(err) =
-                        walk_directory(&directory, &mut directory_queue, &mut file_hashmap)
+                        walk_directory(&directory, &mut directory_queue, &mut file_hashmap, &args)
                     {
                         eprintln!(
                             "Error walking directory: `{}` {err}",
@@ -54,11 +57,11 @@ fn print_results(file_hashmap: HashMap<String, Vec<PathBuf>>) {
     for (_, file_list) in file_hashmap {
         if file_list.len() > 1 {
             duplicates_found = true;
-            println!("-------Duplicated entry-------");
+            println!("------- Multiple Entries Found -------");
             for (index, file) in file_list.iter().enumerate() {
-                println!("`{}` -> {}", index + 1, file.to_string_lossy());
+                println!("{:>5} -> `{}`", index + 1, file.to_string_lossy());
             }
-            println!("------------------------------");
+            println!("--------------------------------------");
         }
     }
 
@@ -77,6 +80,7 @@ fn setup() -> ArgMap {
             "Directory being analyzed",
         ))
         .arg(Arg::boolean("recurse", Some('r'), "Run recursively"))
+        .arg(Arg::boolean("include-hidden", None, "Include hidden."))
         .parse()
 }
 
@@ -89,10 +93,20 @@ fn walk_directory(
     path: impl AsRef<Path>,
     to_visit_queue: &mut VecDeque<PathBuf>,
     file_hash_map: &mut HashMap<String, Vec<PathBuf>>,
+    config: &ArgMap,
 ) -> std::io::Result<()> {
     let directory_iterator = std::fs::read_dir(path)?;
+    let include_hidden = config.has_arg("include-hidden");
     for dir_item in directory_iterator.flatten() {
         let item_path = dir_item.path();
+
+        // Check if hidden files are to be ignored
+        if let Ok(meta) = item_path.metadata() {
+            if meta.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0 && !include_hidden {
+                continue;
+            }
+        }
+
         if item_path.is_dir() {
             to_visit_queue.push_back(item_path);
         } else {
@@ -107,12 +121,15 @@ fn walk_directory(
 
 /// Determine the hash for a given file
 fn get_file_hash(path: &PathBuf) -> std::io::Result<String> {
-    let file_size = path.metadata()?.file_size();
-    let mut buffer = Vec::with_capacity(file_size as usize);
+    let mut buffer = [0; 4096];
     let mut file = std::fs::File::open(path)?;
-    file.read_to_end(&mut buffer)?;
-
     let mut hasher = Sha256::new();
-    hasher.update(buffer);
+    loop {
+        let read_bytes = file.read(&mut buffer)?;
+        if read_bytes == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read_bytes]);
+    }
     Ok(hasher.finalize().map(|byte| format!("{:x}", byte)).join(""))
 }
